@@ -1,0 +1,302 @@
+---
+title: "ME524 - TRABALHO 1"
+format: html
+editor: visual
+---
+
+## Quarto
+
+```{r}
+#Instalando bibliotecar necessárias
+pacotes <- c("dplyr", "readr")
+
+#Verificando se as bibliotecas estão instaldas
+for (pacote in pacotes) {
+  if (!requireNamespace(pacote, quietly = TRUE)) {
+    install.packages(pacote)
+  }
+}
+
+# Carregando as bibliotecas necessárias
+library(dplyr)
+library(readr)
+
+```
+
+# Preparação de Dados e Estimativas Iniciais ($\theta$ e $\phi$)
+
+```{r}
+
+#Carregando os dados
+jogos <- read_csv("brasileirao_2026.csv")
+
+#Filtrando apenas os jogos que já aconteceram (onde os gols não estão vazios)
+jogos_realizados <- jogos %>% 
+  filter(!is.na(gols_mandante) & !is.na(gols_visitante))
+
+# Filtrando os jogos que ainda não foram realizados
+jogos_restantes <- jogos %>%
+  filter(is.na(gols_mandante) & is.na(gols_visitante))
+# 3. Calcular theta e phi para cada time
+# Primeiro, extraímos o desempenho dos times quando jogaram em casa
+desempenho_casa <- jogos_realizados %>%
+  select(time = time_mandante, gols_feitos = gols_mandante, gols_sofridos = gols_visitante)
+
+# Depois, extraímos o desempenho quando jogaram fora
+desempenho_fora <- jogos_realizados %>%
+  select(time = time_visitante, gols_feitos = gols_visitante, gols_sofridos = gols_mandante)
+
+# Juntamos os dois cenários para ter o histórico completo de cada time
+desempenho_geral <- bind_rows(desempenho_casa, desempenho_fora)
+
+# Calculamos as médias solicitadas
+parametros_times <- desempenho_geral %>%
+  group_by(time) %>%
+  summarise(
+    theta = mean(gols_feitos),   # Média de gols marcados
+    phi = mean(gols_sofridos),   # Média de gols sofridos
+    jogos_disputados = n()       # Apenas para conferência
+  )
+
+# Visualizar os parâmetros calculados
+print(parametros_times)
+
+```
+
+Construindo a Função de Classificação
+
+```{r}
+
+
+# Função que recebe uma tabela de resultados e devolve a classificação
+calcular_classificacao <- function(tabela_resultados) {
+  
+  # 1. Calcular pontos e métricas para os times MANDANTES
+  desempenho_mandante <- tabela_resultados %>%
+    mutate(
+      pontos = case_when(
+        gols_mandante > gols_visitante ~ 3,
+        gols_mandante == gols_visitante ~ 1,
+        TRUE ~ 0
+      ),
+      vitoria = ifelse(gols_mandante > gols_visitante, 1, 0),
+      saldo = gols_mandante - gols_visitante
+    ) %>%
+    select(time = time_mandante, pontos, vitoria, saldo, gols_feitos = gols_mandante)
+  
+  # 2. Calcular pontos e métricas para os times VISITANTES
+  desempenho_visitante <- tabela_resultados %>%
+    mutate(
+      pontos = case_when(
+        gols_visitante > gols_mandante ~ 3,
+        gols_visitante == gols_mandante ~ 1,
+        TRUE ~ 0
+      ),
+      vitoria = ifelse(gols_visitante > gols_mandante, 1, 0),
+      saldo = gols_visitante - gols_mandante
+    ) %>%
+    select(time = time_visitante, pontos, vitoria, saldo, gols_feitos = gols_visitante)
+  
+  # 3. Juntar e agregar para formar a tabela de classificação
+  classificacao_final <- bind_rows(desempenho_mandante, desempenho_visitante) %>%
+    group_by(time) %>%
+    summarise(
+      pontos = sum(pontos),
+      vitorias = sum(vitoria),
+      saldo_gols = sum(saldo),
+      gols_pro = sum(gols_feitos)
+    ) %>%
+    # 4. Ordenar aplicando os critérios de desempate
+    arrange(desc(pontos), desc(vitorias), desc(saldo_gols), desc(gols_pro)) %>%
+    mutate(posicao = row_number()) # Adiciona a posição (1 a 20)
+  
+  return(classificacao_final)
+}
+
+# Para testar a sua função com os jogos que já aconteceram e ver a tabela atual:
+# tabela_atual <- calcular_classificacao(jogos_realizados)
+# print(tabela_atual)
+```
+
+# Monte Carlo
+
+```{r}
+# Função para simular um único jogo
+simular_jogo <- function(time_mandante, time_visitante, parametros) {
+  
+  # Parâmetros do mandante
+  theta_m <- parametros$theta[parametros$time == time_mandante]
+  phi_m <- parametros$phi[parametros$time == time_mandante]
+  
+  # Parâmetros do visitante
+  theta_v <- parametros$theta[parametros$time == time_visitante]
+  phi_v <- parametros$phi[parametros$time == time_visitante]
+  
+  # Parâmetros das distribuições de Poisson
+  lambda_m <- (theta_m + phi_v) / 2
+  lambda_v <- (theta_v + phi_m) / 2
+  
+  # Simulação dos gols
+  gols_mandante <- rpois(1, lambda_m)
+  gols_visitante <- rpois(1, lambda_v)
+  
+  # Retornar resultado
+  tibble(
+    gols_mandante = gols_mandante,
+    gols_visitante = gols_visitante
+  )
+}
+```
+
+```{r}
+# alguns testes pra fazer se oq fizemos esta ok
+
+set.seed(29)
+
+simular_jogo(
+  time_mandante = "Botafogo",
+  time_visitante = "Grêmio",
+  parametros = parametros_times
+)
+```
+
+```{r}
+# ainda testando
+simular_jogo("Botafogo", "Grêmio", parametros_times)
+simular_jogo("Botafogo", "Grêmio", parametros_times)
+simular_jogo("Botafogo", "Grêmio", parametros_times)
+simular_jogo("Botafogo", "Grêmio", parametros_times)
+simular_jogo("Botafogo", "Grêmio", parametros_times)
+```
+
+```{r}
+# Função para simular uma temporada completa
+simular_campeonato <- function(jogos_realizados, jogos_restantes, parametros) {
+  
+  # Criar uma cópia dos jogos restantes
+  jogos_simulados <- jogos_restantes
+  
+  # Simular cada jogo restante
+  for (i in 1:nrow(jogos_simulados)) {
+    
+    resultado <- simular_jogo(
+      time_mandante = jogos_simulados$time_mandante[i],
+      time_visitante = jogos_simulados$time_visitante[i],
+      parametros = parametros
+    )
+    
+    jogos_simulados$gols_mandante[i] <- resultado$gols_mandante
+    jogos_simulados$gols_visitante[i] <- resultado$gols_visitante
+  }
+  
+  # Juntar jogos realizados e jogos simulados
+  campeonato_completo <- bind_rows(
+    jogos_realizados,
+    jogos_simulados
+  )
+  
+  # Calcular classificação final
+  classificacao_final <- calcular_classificacao(campeonato_completo)
+  
+  return(classificacao_final)
+}
+```
+
+```{r}
+# Testando para uma unica temporada
+set.seed(29)
+
+temporada_simulada <- simular_campeonato(
+  jogos_realizados = jogos_realizados,
+  jogos_restantes = jogos_restantes,
+  parametros = parametros_times
+)
+
+print(temporada_simulada)
+```
+
+```{r}
+# Agora sim, MONTE CARLO de verdade
+# Número de simulações Monte Carlo
+n_sim <- 100 # AUMENTAR DEPOIS (idealmente 10.000 (?))
+
+# Vetor para armazenar o campeão de cada simulação
+campeoes <- character(n_sim)
+
+# Vetor para armazenar os pontos do campeão
+pontos_campeao <- numeric(n_sim)
+
+# Matriz para armazenar a posição final de cada time
+posicoes <- matrix(
+  NA_integer_,
+  nrow = n_sim,
+  ncol = nrow(parametros_times)
+)
+
+colnames(posicoes) <- parametros_times$time
+```
+
+```{r}
+set.seed(29)
+
+for (i in 1:n_sim) {
+  
+  classificacao <- simular_campeonato(
+    jogos_realizados = jogos_realizados,
+    jogos_restantes = jogos_restantes,
+    parametros = parametros_times
+  )
+  
+  # Campeão da simulação
+  campeoes[i] <- classificacao$time[1]
+  
+  # Pontos do campeão
+  pontos_campeao[i] <- classificacao$pontos[1]
+  
+  # Posição de cada time
+  posicoes[i, classificacao$time] <- classificacao$posicao
+}
+```
+
+#Q1
+```{r}
+# Questao 01 - prob de ser campeao
+prob_campeao <- tibble(
+  time = parametros_times$time,
+  probabilidade = sapply(
+    parametros_times$time,
+    function(time) mean(campeoes == time)
+  )
+)
+
+prob_campeao
+```
+
+# Q2
+
+```{r}
+# Questao 2 - prob de ser rebaixado
+prob_rebaixamento <- tibble(
+  time = parametros_times$time,
+  probabilidade = sapply(
+    parametros_times$time,
+    function(time) mean(posicoes[, time] >= 17)
+  )
+)
+
+prob_rebaixamento
+```
+
+
+#Q3
+
+#Q4
+
+#Q5
+
+#Q6
+
+#Bootstrap
+
+#Atividade Extra
+
