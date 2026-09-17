@@ -220,7 +220,7 @@ print(temporada_simulada)
 ```{r}
 # Agora sim, MONTE CARLO de verdade
 # Número de simulações Monte Carlo
-n_sim <- 100 # AUMENTAR DEPOIS (idealmente 10.000 (?))
+n_sim <- 100
 
 # Vetor para armazenar o campeão de cada simulação
 campeoes <- character(n_sim)
@@ -236,6 +236,15 @@ posicoes <- matrix(
 )
 
 colnames(posicoes) <- parametros_times$time
+
+# Matriz para armazenar os pontos finais de cada time
+pontos <- matrix(
+  NA_integer_,
+  nrow = n_sim,
+  ncol = nrow(parametros_times)
+)
+
+colnames(pontos) <- parametros_times$time
 ```
 
 ```{r}
@@ -257,10 +266,14 @@ for (i in 1:n_sim) {
   
   # Posição de cada time
   posicoes[i, classificacao$time] <- classificacao$posicao
+  
+  # Pontos de cada time
+  pontos[i, classificacao$time] <- classificacao$pontos
 }
 ```
 
 #Q1
+
 ```{r}
 # Questao 01 - prob de ser campeao
 prob_campeao <- tibble(
@@ -269,9 +282,48 @@ prob_campeao <- tibble(
     parametros_times$time,
     function(time) mean(campeoes == time)
   )
-)
+) %>%
+  arrange(desc(probabilidade)) %>%
+  mutate(probabilidade = round(probabilidade, 3))
 
 prob_campeao
+```
+
+```{r}
+# grafico
+ ggplot(
+  prob_campeao %>%
+    arrange(desc(probabilidade)) %>%
+    head(5),
+  aes(
+    x = fct_reorder(time, probabilidade),
+    y = probabilidade
+  )
+) +
+  geom_col(
+    width = 0.5,
+    fill = RColorBrewer::brewer.pal(8, "Set2")[1]
+  ) +
+  geom_text(
+    aes(label = sprintf("%.2f", probabilidade)),
+    hjust = -0.1,
+    size = 3
+  ) +
+  coord_flip() +
+  labs(
+    title = "Probabilidade de Título por Equipe",
+    x = "Equipe",
+    y = "Probabilidade de Título"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14)
+  ) +
+  scale_y_continuous(
+    labels = scales::label_percent(accuracy = 1),
+    limits = c(0, 0.55),
+    expand = expansion(mult = c(0, 0.05))
+  )
 ```
 
 # Q2
@@ -284,85 +336,336 @@ prob_rebaixamento <- tibble(
     parametros_times$time,
     function(time) mean(posicoes[, time] >= 17)
   )
-)
+) %>%
+  arrange(desc(probabilidade)) %>%
+  mutate(probabilidade = round(probabilidade, 3))
 
 prob_rebaixamento
 ```
 
+```{r}
+# grafico
+ggplot(
+  prob_rebaixamento %>% filter(probabilidade > 0),
+  aes(
+    x = fct_reorder(time, -probabilidade),
+    y = probabilidade
+  )
+) +
+  geom_col(
+    width = 0.5,
+    fill = RColorBrewer::brewer.pal(8, "Set2")[1]
+  ) +
+  geom_text(
+    aes(label = sprintf("%.2f", probabilidade)),
+    vjust = -0.5,
+    size = 3
+  ) +
+  labs(
+    title = "Probabilidade de Rebaixamento por Equipe",
+    x = "Equipe",
+    y = "Probabilidade de Rebaixamento"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      size = 9
+    )
+  ) +
+  scale_y_continuous(
+    labels = scales::label_percent(accuracy = 1),
+    limits = c(0, 1.08),
+    expand = expansion(mult = c(0, 0.02))
+  )
+```
+Nas 100 simulações realizadas, a Chapecoense foi rebaixada em todas elas, resultando em uma probabilidade estimada de 1,000.
 
 #Q3
 
+```{r}
+# Questao 03 - prob de empate no primeiro lugar
+
+empate_primeiro <- apply(pontos, 1, function(x) {
+  sum(x == max(x)) >= 2
+})
+
+prob_empate_primeiro <- mean(empate_primeiro)
+
+round(prob_empate_primeiro, 3)
+```
+Em 9% dos cenários simulados, duas ou mais equipes terminaram a temporada com a mesma maior pontuação, fazendo com que fosse necessário utilizar os critérios de desempate para definir o campeão.
+
 #Q4
 
+```{r}
+# Questão 04 - valor esperado dos pontos do campeão
+
+valor_esperado <- tibble(
+  medida = "Pontos esperados do campeão",
+  valor = round(mean(pontos_campeao), 2)
+)
+
+valor_esperado
+```
+Nas 100 temporadas simuladas, calculamos quantos pontos o campeão obteve em cada cenário e depois tiramos a média. Assim, o número esperado de pontos do campeão é 76,51.
+
 #Q5
+```{r}
+# pontos que uma equipe precisa pra ter 90% chance de ser campeao
+dados_q5 <- as.data.frame(pontos) %>%
+  mutate(simulacao = row_number()) %>%
+  pivot_longer(
+    cols = -simulacao,
+    names_to = "time",
+    values_to = "pontos"
+  ) %>%
+  mutate(
+    campeao = time == campeoes[simulacao]
+  )
+
+prob_por_pontos <- dados_q5 %>%
+  group_by(pontos) %>%
+  summarise(
+    probabilidade_campeao = mean(campeao),
+    n = n()
+  ) %>%
+  arrange(pontos)
+
+#prob_por_pontos
+
+pontos_90 <- prob_por_pontos %>%
+  filter(probabilidade_campeao >= 0.90) %>%
+  slice_min(pontos, n = 1)
+
+pontos_90
+```
+
+Nas simulações realizadas, observou-se que uma equipe com 80 pontos apresentou probabilidade estimada de 90% de conquistar o título. Essa foi a menor pontuação observada associada a uma probabilidade de título de pelo menos 90%.
+
+```{r}
+prob_por_pontos %>%
+  filter(pontos >= 70)
+```
+
+Nas 100 temporadas simuladas, 80 pontos foi a menor pontuação final para a qual a probabilidade estimada de título atingiu 90%. Entre as 10 ocorrências de equipes com 80 pontos, 9 foram campeãs.
 
 #Q6
 
+```{r}
+# Q6 - prob de não ser rebaixado
+dados_q6 <- as.data.frame(pontos) %>%
+  mutate(simulacao = row_number()) %>%
+  pivot_longer(
+    cols = -simulacao,
+    names_to = "time",
+    values_to = "pontos"
+  ) %>%
+  mutate(
+    posicao = posicoes[cbind(
+      simulacao,
+      match(time, colnames(posicoes))
+    )],
+    nao_rebaixado = posicao <= 16
+  )
+```
+
+```{r}
+prob_por_pontos_q6 <- dados_q6 %>%
+  group_by(pontos) %>%
+  summarise(
+    probabilidade_nao_rebaixado = mean(nao_rebaixado),
+    n = n()
+  ) %>%
+  arrange(pontos)
+
+prob_por_pontos_q6
+```
+
+```{r}
+pontos_95 <- prob_por_pontos_q6 %>%
+  filter(probabilidade_nao_rebaixado >= 0.95) %>%
+  slice_min(pontos, n = 1)
+
+pontos_95
+```
+Nas simulações realizadas, uma equipe que terminou com 45 pontos apresentou probabilidade estimada de 95,59% de não ser rebaixada. Assim, 45 pontos foi a menor pontuação observada que atingiu o nível de 95% de probabilidade de permanência na primeira divisão.
+
 #Bootstrap
+
+```{r}
+# Bootstrap dos parâmetros theta e phi
+
+n_boot <- 1000
+
+resultados_bootstrap <- desempenho_geral %>%
+  group_by(time) %>%
+  group_modify(~ {
+    
+    dados_time <- .x #pega só os dados de um time especifico
+    n_jogos <- nrow(dados_time)
+    
+    theta_boot <- numeric(n_boot)
+    phi_boot <- numeric(n_boot)
+    
+    for (b in 1:n_boot) {
+      
+      amostra <- dados_time[
+        #sorteia de novo os jogos o time selecionado com rep, mantendo a qtd de jogos
+        sample(1:n_jogos, size = n_jogos, replace = TRUE), 
+      ]
+      # calcular os parametros varia vezes
+      theta_boot[b] <- mean(amostra$gols_feitos)
+      phi_boot[b] <- mean(amostra$gols_sofridos)
+    }
+    
+    tibble(
+      theta_boot = theta_boot,
+      phi_boot = phi_boot
+    )
+  }) %>%
+  ungroup()
+```
+
+```{r}
+# construir os IC's
+ic_bootstrap <- resultados_bootstrap %>%
+  group_by(time) %>%
+  summarise(
+    theta = mean(theta_boot),
+    theta_inf = quantile(theta_boot, 0.025),
+    theta_sup = quantile(theta_boot, 0.975),
+    
+    phi = mean(phi_boot),
+    phi_inf = quantile(phi_boot, 0.025),
+    phi_sup = quantile(phi_boot, 0.975)
+  )
+
+ic_bootstrap
+```
+
+```{r}
+# ver se ta parecido os parametros
+
+#parametros_times
+#ic_bootstrap
+
+comparacao_bootstrap <- parametros_times %>%
+  select(time, theta_original = theta, phi_original = phi) %>%
+  left_join(ic_bootstrap, by = "time")
+
+comparacao_bootstrap
+```
+
+
+
+```{r}
+ggplot(
+  dados_grafico_bootstrap,
+  aes(
+    x = media,
+    y = fct_reorder(time, media),
+    color = parametro
+  )
+) +
+  geom_errorbar(
+    aes(
+      xmin = inferior,
+      xmax = superior
+    ),
+    orientation = "y",
+    height = 0.15,
+    position = position_dodge(width = 0.5)
+  ) +
+  geom_point(
+    size = 2.5,
+    position = position_dodge(width = 0.5)
+  ) +
+  labs(
+    title = "Intervalos de Confiança Bootstrap das Médias de Gols",
+    x = "Média de gols por partida",
+    y = "Equipe",
+    color = "Parâmetro"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom"
+  ) +
+  scale_color_brewer(palette = "Set2")
+```
+Os intervalos de confiança bootstrap evidenciam diferentes níveis de variabilidade nas estimativas de gols marcados e sofridos entre as equipes. Intervalos mais largos indicam maior incerteza associada à estimativa da média, enquanto intervalos mais estreitos indicam maior estabilidade nas reamostragens. Observa-se, por exemplo, que o Flamengo apresenta estimativa elevada de gols marcados (\(\hat{\theta}=2,01\)) e baixa de gols sofridos (\(\hat{\phi}=0,84\)), enquanto a Chapecoense apresenta o padrão oposto, com \(\hat{\theta}=1,05\) e \(\hat{\phi}=2,04\). Esses resultados também ilustram como as diferenças estimadas entre as equipes são incorporadas ao modelo de simulação.
+
+Os pontos representam as médias de gols marcados e sofridos estimadas para cada equipe, enquanto as linhas representam os intervalos de confiança bootstrap de 95%; portanto, o gráfico permite visualizar tanto as diferenças de desempenho estimado quanto a incerteza associada a essas estimativas.
 
 #Atividade Extra
 
 ```{r}
-# Atividade Extra: Preparação dos Parâmetros η_m e η_v
-
-# 1. Obter as médias de gols marcados em casa e fora para cada equipe
+# Preparação dos novos parâmetros para os novos modelos
 desempenho_mandante_extra <- jogos_realizados %>%
   group_by(time = time_mandante) %>%
   summarise(
-    media_gm_casa = mean(gols_mandante), 
+    taxa_gm_casa = mean(gols_mandante), 
     .groups = "drop"
   )
 
 desempenho_visitante_extra <- jogos_realizados %>%
   group_by(time = time_visitante) %>%
   summarise(
-    media_gm_fora = mean(gols_visitante), 
+    taxa_gm_fora = mean(gols_visitante), 
     .groups = "drop"
   )
 
-# 2. Calcular os fatores de desempenho eta_m e eta_v
+# Juntar com parametros_times e calcular os fatores (1 + η_m - η_v) e η_m
 parametros_extras <- parametros_times %>%
   left_join(desempenho_mandante_extra, by = "time") %>%
   left_join(desempenho_visitante_extra, by = "time") %>%
   mutate(
-    media_gm_casa = coalesce(media_gm_casa, theta),
-    media_gm_fora = coalesce(media_gm_fora, theta),
-    
-    # eta_m: Eficiência ofensiva atuando em casa
-    eta_m = media_gm_casa / pmax(theta, 0.01),
-    
-    # eta_v: Eficiência ofensiva atuando fora de casa
-    eta_v = media_gm_fora / pmax(theta, 0.01)
+    taxa_gm_casa = coalesce(taxa_gm_casa, theta),
+    taxa_gm_fora = coalesce(taxa_gm_fora, theta),
+    # Fator Eta (Variação 1: baseado na diferença relativa)
+    η = (taxa_gm_casa - taxa_gm_fora) / (taxa_gm_casa + taxa_gm_fora + 1e-6),
+    # Fator Nm (Variação 2: multiplicativo puro do mandante)
+    Nm = pmax(0.1, taxa_gm_casa / pmax(theta, 0.01))
   )
 ```
 
 ```{r}
-# Função de Simulação de Jogo para os 2 Modelos
+# Função de simulação de jogo para os 3 modelos (original e dois extras)
 simular_jogo_modelo <- function(time_mandante, time_visitante, parametros, 
                                 tipo_modelo = "original") {
   
-  # Parâmetros da equipe mandante
+  # Parâmetros do mandante
   m_row <- parametros %>% filter(time == time_mandante)
   theta_m <- m_row$theta
   phi_m   <- m_row$phi
-  eta_m_m <- m_row$eta_m
+  η_m     <- m_row$η
+  Nm_m    <- m_row$Nm
   
-  # Parâmetros da equipe visitante
+  # Parâmetros do visitante
   v_row <- parametros %>% filter(time == time_visitante)
   theta_v <- v_row$theta
   phi_v   <- v_row$phi
-  eta_v_v <- v_row$eta_v
+  η_v     <- m_row$η
   
-  # Cálculo dos lambdas de acordo com o modelo
+  # Cálculo dos lambdas de acordo com o modelo escolhido
   if (tipo_modelo == "original") {
-    # Modelo Baseline
     lambda_m <- (theta_m + phi_v) / 2
     lambda_v <- (theta_v + phi_m) / 2
     
-  } else if (tipo_modelo == "variacao_multiplicativa") {
-    # Variação Multiplicativa: Ajuste direto por eta_m no mandante e eta_v no visitante
-    lambda_m <- ((theta_m + phi_v) / 2) * eta_m_m
-    lambda_v <- ((theta_v + phi_m) / 2) * eta_v_v
+  } else if (tipo_modelo == "variacao_eta") {
+    # Modelo com fator (1 + η_m - η_v)
+    factor_m <- pmax(0.01, 1 + η_m - η_v)
+    factor_v <- pmax(0.01, 1 + η_v - η_m)
+    lambda_m <- ((theta_m + phi_v) / 2) * factor_m
+    lambda_v <- ((theta_v + phi_m) / 2) * factor_v
+    
+  } else if (tipo_modelo == "variacao_nm") {
+    # Modelo multiplicando apenas por Nm no mandante
+    lambda_m <- ((theta_m + phi_v) / 2) * Nm_m
+    lambda_v <- (theta_v + phi_m) / 2
   }
   
   tibble(
@@ -373,9 +676,9 @@ simular_jogo_modelo <- function(time_mandante, time_visitante, parametros,
 ```
 
 ```{r}
-# Função para Simular o Campeonato Completo por Modelo
+# Função de simulação do campeonato por modelo
 simular_campeonato_modelo <- function(jogos_realizados, jogos_restantes,
-                                   parametros, tipo_modelo) {
+                                    parametros, tipo_modelo) {
   jogos_simulados <- jogos_restantes
   
   for (i in 1:nrow(jogos_simulados)) {
@@ -395,8 +698,8 @@ simular_campeonato_modelo <- function(jogos_realizados, jogos_restantes,
 ```
 
 ```{r}
-# Execução das Simulações de Monte Carlo
-n_sim_extra <- 500
+# Executar as simulações Monte Carlo para os 3 modelos
+n_sim_extra <- 100
 set.seed(29)
 
 rodar_monte_carlo_modelo <- function(tipo_modelo, n_sim) {
@@ -412,36 +715,47 @@ rodar_monte_carlo_modelo <- function(tipo_modelo, n_sim) {
   return(as.numeric(prob))
 }
 
-res_original    <- rodar_monte_carlo_modelo("original", n_sim_extra)
-res_multiplicat <- rodar_monte_carlo_modelo("variacao_multiplicativa", n_sim_extra)
+res_original <- rodar_monte_carlo_modelo("original", n_sim_extra)
+res_eta <- rodar_monte_carlo_modelo("variacao_eta", n_sim_extra)
+res_nm <- rodar_monte_carlo_modelo("variacao_nm", n_sim_extra)
 ```
 
 ```{r}
-# Tabela Comparativa dos 2 Modelos (filtrando times com 0% de probabilidade)
+# Tabela Comparativa de Título dos 3 modelos (Alterado para `Variação (η_m)`)
 tabela_comparativa_extra <- tibble(
   time = parametros_extras$time,
   `Modelo Original` = res_original,
-  `Variação (η_m e η_v)` = res_multiplicat
+  `Variação (1 + η_m - η_v)` = res_eta,
+  `Variação (η_m)` = res_nm
 ) %>%
-  filter(`Modelo Original` > 0 | `Variação (η_m e η_v)` > 0) %>%
   arrange(desc(`Modelo Original`))
 
 print(tabela_comparativa_extra)
 ```
 
 ```{r}
-# Gráfico Comparativo das 5 Principais Equipes
-dados_grafico_extra <- tabela_comparativa_extra %>%
-  mutate(media_prob = (`Modelo Original` + `Variação (η_m e η_v)`) / 2) %>%
+# Gráfico comparativo
+
+# Preparar os dados para o gráfico com base na tabela gerada anteriormente
+dados_grafico_extra <- tibble(
+  time = parametros_extras$time,
+  `Modelo Original` = res_original,
+  `Variação (1 + η_m - η_v)` = res_eta,
+  `Variação (η_m)` = res_nm
+) %>%
+  # Calcular a média de probabilidade para selecionar o Top 5
+  mutate(media_prob = (`Modelo Original` + `Variação (1 + η_m - η_v)` + 
+                       `Variação (η_m)`) / 3) %>%
   arrange(desc(media_prob)) %>%
-  slice_head(n = 5) %>%
+  slice_head(n = 5) %>% # Selecionar apenas os 5 primeiros colocados
   select(-media_prob) %>%
   pivot_longer(
-    cols = c(`Modelo Original`, `Variação (η_m e η_v)`), 
+    cols = c(`Modelo Original`, `Variação (1 + η_m - η_v)`, `Variação (η_m)`), 
     names_to = "Modelo", 
     values_to = "Probabilidade"
   )
 
+# Construção do gráfico de barras
 ggplot(dados_grafico_extra, aes(x = fct_reorder(time, Probabilidade), y = Probabilidade, fill = Modelo)) +
   geom_col(position = "dodge", width = 0.7) +
   coord_flip() +
