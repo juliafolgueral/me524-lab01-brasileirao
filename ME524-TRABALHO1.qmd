@@ -303,69 +303,66 @@ prob_rebaixamento
 #Atividade Extra
 
 ```{r}
-# Preparação dos novos parâmetros para os novos modelos
+# Atividade Extra: Preparação dos Parâmetros η_m e η_v
+
+# 1. Obter as médias de gols marcados em casa e fora para cada equipe
 desempenho_mandante_extra <- jogos_realizados %>%
   group_by(time = time_mandante) %>%
   summarise(
-    taxa_gm_casa = mean(gols_mandante), 
+    media_gm_casa = mean(gols_mandante), 
     .groups = "drop"
   )
 
 desempenho_visitante_extra <- jogos_realizados %>%
   group_by(time = time_visitante) %>%
   summarise(
-    taxa_gm_fora = mean(gols_visitante), 
+    media_gm_fora = mean(gols_visitante), 
     .groups = "drop"
   )
 
-# Juntar com parametros_times e calcular os fatores (1 + η_m - η_v) e η_m
+# 2. Calcular os fatores de desempenho eta_m e eta_v
 parametros_extras <- parametros_times %>%
   left_join(desempenho_mandante_extra, by = "time") %>%
   left_join(desempenho_visitante_extra, by = "time") %>%
   mutate(
-    taxa_gm_casa = coalesce(taxa_gm_casa, theta),
-    taxa_gm_fora = coalesce(taxa_gm_fora, theta),
-    # Fator Eta (Variação 1: baseado na diferença relativa)
-    η = (taxa_gm_casa - taxa_gm_fora) / (taxa_gm_casa + taxa_gm_fora + 1e-6),
-    # Fator Nm (Variação 2: multiplicativo puro do mandante)
-    Nm = pmax(0.1, taxa_gm_casa / pmax(theta, 0.01))
+    media_gm_casa = coalesce(media_gm_casa, theta),
+    media_gm_fora = coalesce(media_gm_fora, theta),
+    
+    # eta_m: Eficiência ofensiva atuando em casa
+    eta_m = media_gm_casa / pmax(theta, 0.01),
+    
+    # eta_v: Eficiência ofensiva atuando fora de casa
+    eta_v = media_gm_fora / pmax(theta, 0.01)
   )
 ```
 
 ```{r}
-# Função de simulação de jogo para os 3 modelos (original e dois extras)
+# Função de Simulação de Jogo para os 2 Modelos
 simular_jogo_modelo <- function(time_mandante, time_visitante, parametros, 
                                 tipo_modelo = "original") {
   
-  # Parâmetros do mandante
+  # Parâmetros da equipe mandante
   m_row <- parametros %>% filter(time == time_mandante)
   theta_m <- m_row$theta
   phi_m   <- m_row$phi
-  η_m     <- m_row$η
-  Nm_m    <- m_row$Nm
+  eta_m_m <- m_row$eta_m
   
-  # Parâmetros do visitante
+  # Parâmetros da equipe visitante
   v_row <- parametros %>% filter(time == time_visitante)
   theta_v <- v_row$theta
   phi_v   <- v_row$phi
-  η_v     <- m_row$η
+  eta_v_v <- v_row$eta_v
   
-  # Cálculo dos lambdas de acordo com o modelo escolhido
+  # Cálculo dos lambdas de acordo com o modelo
   if (tipo_modelo == "original") {
+    # Modelo Baseline
     lambda_m <- (theta_m + phi_v) / 2
     lambda_v <- (theta_v + phi_m) / 2
     
-  } else if (tipo_modelo == "variacao_eta") {
-    # Modelo com fator (1 + η_m - η_v)
-    factor_m <- pmax(0.01, 1 + η_m - η_v)
-    factor_v <- pmax(0.01, 1 + η_v - η_m)
-    lambda_m <- ((theta_m + phi_v) / 2) * factor_m
-    lambda_v <- ((theta_v + phi_m) / 2) * factor_v
-    
-  } else if (tipo_modelo == "variacao_nm") {
-    # Modelo multiplicando apenas por Nm no mandante
-    lambda_m <- ((theta_m + phi_v) / 2) * Nm_m
-    lambda_v <- (theta_v + phi_m) / 2
+  } else if (tipo_modelo == "variacao_multiplicativa") {
+    # Variação Multiplicativa: Ajuste direto por eta_m no mandante e eta_v no visitante
+    lambda_m <- ((theta_m + phi_v) / 2) * eta_m_m
+    lambda_v <- ((theta_v + phi_m) / 2) * eta_v_v
   }
   
   tibble(
@@ -376,9 +373,9 @@ simular_jogo_modelo <- function(time_mandante, time_visitante, parametros,
 ```
 
 ```{r}
-# Função de simulação do campeonato por modelo
+# Função para Simular o Campeonato Completo por Modelo
 simular_campeonato_modelo <- function(jogos_realizados, jogos_restantes,
-                                    parametros, tipo_modelo) {
+                                   parametros, tipo_modelo) {
   jogos_simulados <- jogos_restantes
   
   for (i in 1:nrow(jogos_simulados)) {
@@ -398,7 +395,7 @@ simular_campeonato_modelo <- function(jogos_realizados, jogos_restantes,
 ```
 
 ```{r}
-# Executar as simulações Monte Carlo para os 3 modelos
+# Execução das Simulações de Monte Carlo
 n_sim_extra <- 500
 set.seed(29)
 
@@ -415,47 +412,36 @@ rodar_monte_carlo_modelo <- function(tipo_modelo, n_sim) {
   return(as.numeric(prob))
 }
 
-res_original <- rodar_monte_carlo_modelo("original", n_sim_extra)
-res_eta <- rodar_monte_carlo_modelo("variacao_eta", n_sim_extra)
-res_nm <- rodar_monte_carlo_modelo("variacao_nm", n_sim_extra)
+res_original    <- rodar_monte_carlo_modelo("original", n_sim_extra)
+res_multiplicat <- rodar_monte_carlo_modelo("variacao_multiplicativa", n_sim_extra)
 ```
 
 ```{r}
-# Tabela Comparativa de Título dos 3 modelos (Alterado para `Variação (η_m)`)
+# Tabela Comparativa dos 2 Modelos (filtrando times com 0% de probabilidade)
 tabela_comparativa_extra <- tibble(
   time = parametros_extras$time,
   `Modelo Original` = res_original,
-  `Variação (1 + η_m - η_v)` = res_eta,
-  `Variação (η_m)` = res_nm
+  `Variação (η_m e η_v)` = res_multiplicat
 ) %>%
+  filter(`Modelo Original` > 0 | `Variação (η_m e η_v)` > 0) %>%
   arrange(desc(`Modelo Original`))
 
 print(tabela_comparativa_extra)
 ```
 
 ```{r}
-# Gráfico comparativo
-
-# Preparar os dados para o gráfico com base na tabela gerada anteriormente
-dados_grafico_extra <- tibble(
-  time = parametros_extras$time,
-  `Modelo Original` = res_original,
-  `Variação (1 + η_m - η_v)` = res_eta,
-  `Variação (η_m)` = res_nm
-) %>%
-  # Calcular a média de probabilidade para selecionar o Top 5
-  mutate(media_prob = (`Modelo Original` + `Variação (1 + η_m - η_v)` + 
-                       `Variação (η_m)`) / 3) %>%
+# Gráfico Comparativo das 5 Principais Equipes
+dados_grafico_extra <- tabela_comparativa_extra %>%
+  mutate(media_prob = (`Modelo Original` + `Variação (η_m e η_v)`) / 2) %>%
   arrange(desc(media_prob)) %>%
-  slice_head(n = 5) %>% # Selecionar apenas os 5 primeiros colocados
+  slice_head(n = 5) %>%
   select(-media_prob) %>%
   pivot_longer(
-    cols = c(`Modelo Original`, `Variação (1 + η_m - η_v)`, `Variação (η_m)`), 
+    cols = c(`Modelo Original`, `Variação (η_m e η_v)`), 
     names_to = "Modelo", 
     values_to = "Probabilidade"
   )
 
-# Construção do gráfico de barras
 ggplot(dados_grafico_extra, aes(x = fct_reorder(time, Probabilidade), y = Probabilidade, fill = Modelo)) +
   geom_col(position = "dodge", width = 0.7) +
   coord_flip() +
