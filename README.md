@@ -28,7 +28,6 @@ Como extensão, foi desenvolvido um modelo que incorpora fatores de desempenho *
 * Pandas
 * NumPy
 * Matplotlib
-* SciPy
 * Simulação de Monte Carlo
 * Bootstrap
 
